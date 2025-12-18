@@ -1,198 +1,103 @@
 <?php
-// /admin/includes/functions.php
+// includes/functions.php - Các hàm tiện ích
 
-// Include file database
-require_once 'db.php';
-
-// Hàm lấy thống kê tổng quan
-function getDashboardStats() {
-    $conn = getDBConnection();
-    $stats = [];
-    
-    // Tổng số người dùng
-    $result = $conn->query("SELECT COUNT(*) as total FROM nguoi_dung");
-    $stats['total_users'] = $result->fetch_assoc()['total'];
-    
-    // Tổng số sản phẩm
-    $result = $conn->query("SELECT COUNT(*) as total FROM san_pham WHERE trang_thai != 'DA_GO'");
-    $stats['total_products'] = $result->fetch_assoc()['total'];
-    
-    // Tổng số đơn hàng
-    $result = $conn->query("SELECT COUNT(*) as total FROM don_hang");
-    $stats['total_orders'] = $result->fetch_assoc()['total'];
-    
-    // Doanh thu tháng này
-    $current_month = date('Y-m');
-    $result = $conn->query("SELECT SUM(tong_tien) as revenue FROM don_hang WHERE DATE_FORMAT(tao_luc, '%Y-%m') = '$current_month' AND trang_thai = 'HOAN_TAT'");
-    $stats['monthly_revenue'] = $result->fetch_assoc()['revenue'] ?: 0;
-    
-    // Đơn hàng mới hôm nay
-    $today = date('Y-m-d');
-    $result = $conn->query("SELECT COUNT(*) as new_orders FROM don_hang WHERE DATE(tao_luc) = '$today'");
-    $stats['today_orders'] = $result->fetch_assoc()['new_orders'];
-    
-    closeDBConnection($conn);
-    return $stats;
+function formatPrice($price) {
+    return number_format($price, 0, ',', '.') . 'đ';
 }
 
-// Hàm format tiền tệ
-function formatCurrency($amount) {
-    return number_format($amount, 0, ',', '.') . ' ₫';
+function formatDate($date) {
+    return date('d/m/Y', strtotime($date));
 }
 
-// Hàm format ngày tháng
-function formatDate($date, $format = 'd/m/Y H:i') {
-    if (!$date) return '';
-    $dateTime = new DateTime($date);
-    return $dateTime->format($format);
+function formatDateTime($datetime) {
+    return date('d/m/Y H:i', strtotime($datetime));
 }
 
-// Hàm hiển thị trạng thái đơn hàng
-function displayOrderStatus($status) {
-    $badge_classes = [
-        'CHO_XU_LY' => 'bg-warning',
-        'DANG_XU_LY' => 'bg-info',
-        'HOAN_TAT' => 'bg-success',
-        'HUY' => 'bg-danger'
+function getStatusBadge($status, $type = 'product') {
+    $badges = [
+        'product' => [
+            'DANG_BAN' => '<span class="badge bg-success-subtle text-success border border-success-subtle">Đang bán</span>',
+            'NGUNG_BAN' => '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Ngừng bán</span>',
+            'DA_GO' => '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">Đã gỡ</span>'
+        ],
+        'order' => [
+            'CHO_XU_LY' => '<span class="badge bg-info-subtle text-info border border-info-subtle">Chờ xử lý</span>',
+            'DANG_XU_LY' => '<span class="badge bg-primary-subtle text-primary border border-primary-subtle">Đang xử lý</span>',
+            'HOAN_TAT' => '<span class="badge bg-success-subtle text-success border border-success-subtle">Hoàn tất</span>',
+            'HUY' => '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">Đã hủy</span>'
+        ],
+        'user' => [
+            'HOAT_DONG' => '<span class="badge bg-success-subtle text-success border border-success-subtle">Hoạt động</span>',
+            'KHOA' => '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">Khóa</span>',
+            'NGUNG_HOAT_DONG' => '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Ngừng</span>'
+        ],
+        'category' => [
+            'HOAT_DONG' => '<span class="badge bg-success-subtle text-success border border-success-subtle">Hoạt động</span>',
+            'NGUNG_HOAT_DONG' => '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Ngừng</span>'
+        ]
     ];
-    
-    $status_text = [
-        'CHO_XU_LY' => 'Chờ xử lý',
-        'DANG_XU_LY' => 'Đang xử lý',
-        'HOAN_TAT' => 'Hoàn tất',
-        'HUY' => 'Đã hủy'
-    ];
-    
-    $class = $badge_classes[$status] ?? 'bg-secondary';
-    $text = $status_text[$status] ?? $status;
-    
-    return "<span class='badge $class'>$text</span>";
+    return $badges[$type][$status] ?? '<span class="badge bg-secondary">N/A</span>';
 }
 
-// Hàm hiển thị trạng thái sản phẩm
-function displayProductStatus($status) {
-    $badge_classes = [
-        'DANG_BAN' => 'bg-success',
-        'NGUNG_BAN' => 'bg-warning',
-        'DA_GO' => 'bg-danger'
-    ];
-    
-    $status_text = [
-        'DANG_BAN' => 'Đang bán',
-        'NGUNG_BAN' => 'Ngừng bán',
-        'DA_GO' => 'Đã gỡ'
-    ];
-    
-    $class = $badge_classes[$status] ?? 'bg-secondary';
-    $text = $status_text[$status] ?? $status;
-    
-    return "<span class='badge $class'>$text</span>";
+function createSlug($str) {
+    $str = trim(mb_strtolower($str));
+    $str = preg_replace('/(à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ)/', 'a', $str);
+    $str = preg_replace('/(è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ)/', 'e', $str);
+    $str = preg_replace('/(ì|í|ị|ỉ|ĩ)/', 'i', $str);
+    $str = preg_replace('/(ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ)/', 'o', $str);
+    $str = preg_replace('/(ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ)/', 'u', $str);
+    $str = preg_replace('/(ỳ|ý|ỵ|ỷ|ỹ)/', 'y', $str);
+    $str = preg_replace('/(đ)/', 'd', $str);
+    $str = preg_replace('/[^a-z0-9-\s]/', '', $str);
+    $str = preg_replace('/([\s]+)/', '-', $str);
+    return $str;
 }
 
-// Hàm upload ảnh
-function uploadImage($file, $product_id) {
-    $upload_dir = __DIR__ . '/../uploads/products/';
-    
-    // Tạo thư mục nếu chưa tồn tại
-    if (!file_exists($upload_dir)) {
-        mkdir($upload_dir, 0777, true);
-    }
-    
-    // Kiểm tra file upload
-    if ($file['error'] !== UPLOAD_ERR_OK) {
-        return ['success' => false, 'message' => 'Lỗi upload file'];
-    }
-    
-    // Kiểm tra định dạng file
-    $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!in_array($file['type'], $allowed_types)) {
-        return ['success' => false, 'message' => 'Chỉ chấp nhận file ảnh (JPEG, PNG, GIF, WebP)'];
-    }
-    
-    // Tạo tên file mới
-    $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-    $filename = 'product_' . $product_id . '_' . time() . '.' . $extension;
-    $filepath = $upload_dir . $filename;
-    
-    // Di chuyển file
-    if (move_uploaded_file($file['tmp_name'], $filepath)) {
-        // Trả về URL tương đối
-        return ['success' => true, 'url' => '/admin/uploads/products/' . $filename];
-    }
-    
-    return ['success' => false, 'message' => 'Không thể lưu file'];
+function sanitize($data) {
+    return htmlspecialchars(strip_tags(trim($data)), ENT_QUOTES, 'UTF-8');
 }
 
-// Hàm phân trang
-function paginate($total_items, $items_per_page, $current_page, $url) {
-    $total_pages = ceil($total_items / $items_per_page);
-    
-    $pagination = '';
-    if ($total_pages > 1) {
-        $pagination .= '<nav aria-label="Page navigation"><ul class="pagination">';
-        
-        // Nút Previous
-        if ($current_page > 1) {
-            $pagination .= '<li class="page-item"><a class="page-link" href="' . $url . '?page=' . ($current_page - 1) . '">&laquo;</a></li>';
-        }
-        
-        // Các trang
-        $start_page = max(1, $current_page - 2);
-        $end_page = min($total_pages, $current_page + 2);
-        
-        for ($i = $start_page; $i <= $end_page; $i++) {
-            $active = $i == $current_page ? ' active' : '';
-            $pagination .= '<li class="page-item' . $active . '"><a class="page-link" href="' . $url . '?page=' . $i . '">' . $i . '</a></li>';
-        }
-        
-        // Nút Next
-        if ($current_page < $total_pages) {
-            $pagination .= '<li class="page-item"><a class="page-link" href="' . $url . '?page=' . ($current_page + 1) . '">&raquo;</a></li>';
-        }
-        
-        $pagination .= '</ul></nav>';
+function uploadImage($file, $folder = 'uploads/') {
+    if (!file_exists($folder)) {
+        mkdir($folder, 0777, true);
     }
     
-    return $pagination;
+    $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    $filename = $file['name'];
+    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    
+    if (!in_array($ext, $allowed)) {
+        return ['success' => false, 'message' => 'Định dạng file không hợp lệ'];
+    }
+    
+    $newname = uniqid() . '.' . $ext;
+    $destination = $folder . $newname;
+    
+    if (move_uploaded_file($file['tmp_name'], $destination)) {
+        return ['success' => true, 'path' => $destination];
+    }
+    
+    return ['success' => false, 'message' => 'Lỗi upload file'];
 }
 
-// Hàm lấy dữ liệu với phân trang
-function getPaginatedData($conn, $query, $params = [], $page = 1, $per_page = 10) {
-    // Đếm tổng số bản ghi
-    $count_query = preg_replace('/SELECT.*FROM/i', 'SELECT COUNT(*) as total FROM', $query, 1);
-    $count_query = preg_replace('/ORDER BY.*/i', '', $count_query);
-    
-    $stmt = $conn->prepare($count_query);
-    if ($params) {
-        $types = str_repeat('s', count($params));
-        $stmt->bind_param($types, ...$params);
-    }
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $total = $result->fetch_assoc()['total'];
-    $stmt->close();
-    
-    // Tính toán phân trang
-    $offset = ($page - 1) * $per_page;
-    $query .= " LIMIT ? OFFSET ?";
-    
-    $stmt = $conn->prepare($query);
-    $params[] = $per_page;
-    $params[] = $offset;
-    
-    if ($params) {
-        $types = str_repeat('s', count($params) - 2) . 'ii';
-        $stmt->bind_param($types, ...$params);
-    }
-    
-    $stmt->execute();
-    $data = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-    $stmt->close();
-    
-    return [
-        'data' => $data,
-        'total' => $total,
-        'total_pages' => ceil($total / $per_page)
-    ];
+function redirect($url) {
+    header("Location: $url");
+    exit;
 }
-?>
+
+function showMessage($message, $type = 'success') {
+    $_SESSION['message'] = $message;
+    $_SESSION['message_type'] = $type;
+}
+
+function displayMessage() {
+    if (isset($_SESSION['message'])) {
+        $type = $_SESSION['message_type'] ?? 'success';
+        $bgClass = $type === 'success' ? 'success' : 'danger';
+        echo "<div class='alert alert-{$bgClass} alert-dismissible fade show' role='alert'>
+                {$_SESSION['message']}
+                <button type='button' class='btn-close' data-bs-dismiss='alert'></button>
+              </div>";
+        unset($_SESSION['message'], $_SESSION['message_type']);
+    }
+}

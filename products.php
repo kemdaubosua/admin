@@ -1,250 +1,348 @@
 <?php
-// /admin/products.php
-session_start();
+require_once 'includes/db.php';
 require_once 'includes/auth.php';
 require_once 'includes/functions.php';
-requireAdmin();
 
-$pageTitle = 'Quản lý sản phẩm';
-$conn = getDBConnection();
+checkAdminAuth();
+$page_title = 'Quản lý Sản phẩm';
+$active_page = 'products';
 
-// Xử lý thay đổi trạng thái sản phẩm
-if (isset($_GET['change_status'])) {
-    $product_id = intval($_GET['id']);
-    $status = $_GET['status'];
+// Xử lý các thao tác
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
     
-    $stmt = $conn->prepare("UPDATE san_pham SET trang_thai = ? WHERE id = ?");
-    $stmt->bind_param("si", $status, $product_id);
-    
-    if ($stmt->execute()) {
-        $_SESSION['success'] = 'Đã cập nhật trạng thái sản phẩm';
-    } else {
-        $_SESSION['error'] = 'Lỗi khi cập nhật trạng thái';
+    if ($action === 'add' || $action === 'edit') {
+        $id = $_POST['id'] ?? null;
+        $ten_san_pham = sanitize($_POST['ten_san_pham']);
+        $duong_dan = createSlug($_POST['duong_dan'] ?: $ten_san_pham);
+        $danh_muc_id = $_POST['danh_muc_id'] ?: null;
+        $mo_ta = sanitize($_POST['mo_ta']);
+        $gia_ban = floatval($_POST['gia_ban']);
+        $so_luong_ton = intval($_POST['so_luong_ton']);
+        $trang_thai = $_POST['trang_thai'];
+        $anh_dai_dien_url = sanitize($_POST['anh_dai_dien_url']);
+        
+        try {
+            if ($action === 'add') {
+                $stmt = $pdo->prepare("INSERT INTO san_pham (danh_muc_id, ten_san_pham, duong_dan, mo_ta, gia_ban, so_luong_ton, trang_thai, anh_dai_dien_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$danh_muc_id, $ten_san_pham, $duong_dan, $mo_ta, $gia_ban, $so_luong_ton, $trang_thai, $anh_dai_dien_url]);
+                showMessage('Thêm sản phẩm thành công!');
+            } else {
+                $stmt = $pdo->prepare("UPDATE san_pham SET danh_muc_id = ?, ten_san_pham = ?, duong_dan = ?, mo_ta = ?, gia_ban = ?, so_luong_ton = ?, trang_thai = ?, anh_dai_dien_url = ? WHERE id = ?");
+                $stmt->execute([$danh_muc_id, $ten_san_pham, $duong_dan, $mo_ta, $gia_ban, $so_luong_ton, $trang_thai, $anh_dai_dien_url, $id]);
+                showMessage('Cập nhật sản phẩm thành công!');
+            }
+            redirect('products.php');
+        } catch (PDOException $e) {
+            showMessage('Lỗi: ' . $e->getMessage(), 'danger');
+        }
     }
     
-    $stmt->close();
-    header('Location: products.php');
-    exit();
+    if ($action === 'delete') {
+        $id = $_POST['id'];
+        try {
+            $stmt = $pdo->prepare("DELETE FROM san_pham WHERE id = ?");
+            $stmt->execute([$id]);
+            showMessage('Xóa sản phẩm thành công!');
+        } catch (PDOException $e) {
+            showMessage('Không thể xóa sản phẩm này!', 'danger');
+        }
+        redirect('products.php');
+    }
 }
-
-// Phân trang
-$page = isset($_GET['page']) ? intval($_GET['page']) : 1;
-$per_page = 10;
-$offset = ($page - 1) * $per_page;
-
-// Tìm kiếm và lọc
-$search = $_GET['search'] ?? '';
-$category = $_GET['category'] ?? '';
-$status_filter = $_GET['status'] ?? '';
-
-$where_conditions = [];
-$params = [];
-$types = '';
-
-if ($search) {
-    $where_conditions[] = "sp.ten_san_pham LIKE ?";
-    $params[] = "%$search%";
-    $types .= 's';
-}
-
-if ($category && $category != 'all') {
-    $where_conditions[] = "sp.danh_muc_id = ?";
-    $params[] = $category;
-    $types .= 'i';
-}
-
-if ($status_filter && $status_filter != 'all') {
-    $where_conditions[] = "sp.trang_thai = ?";
-    $params[] = $status_filter;
-    $types .= 's';
-}
-
-$where_sql = $where_conditions ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
-
-// Lấy tổng số sản phẩm
-$count_sql = "SELECT COUNT(*) as total FROM san_pham sp $where_sql";
-$count_stmt = $conn->prepare($count_sql);
-if ($params) {
-    $count_stmt->bind_param($types, ...$params);
-}
-$count_stmt->execute();
-$total_result = $count_stmt->get_result();
-$total_products = $total_result->fetch_assoc()['total'];
-$total_pages = ceil($total_products / $per_page);
-$count_stmt->close();
 
 // Lấy danh sách sản phẩm
-$sql = "
-    SELECT sp.*, dm.ten_danh_muc 
-    FROM san_pham sp
-    LEFT JOIN danh_muc_san_pham dm ON sp.danh_muc_id = dm.id
-    $where_sql
-    ORDER BY sp.id DESC 
-    LIMIT ? OFFSET ?
-";
+$search = $_GET['search'] ?? '';
+$category_filter = $_GET['category'] ?? '';
+$status_filter = $_GET['status'] ?? '';
 
-$params[] = $per_page;
-$params[] = $offset;
-$types .= 'ii';
+$sql = "SELECT sp.*, dm.ten_danh_muc 
+        FROM san_pham sp 
+        LEFT JOIN danh_muc_san_pham dm ON sp.danh_muc_id = dm.id 
+        WHERE 1=1";
+$params = [];
 
-$stmt = $conn->prepare($sql);
-if ($params) {
-    $stmt->bind_param($types, ...$params);
+if ($search) {
+    $sql .= " AND sp.ten_san_pham LIKE ?";
+    $params[] = "%$search%";
 }
-$stmt->execute();
-$products = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
 
-// Lấy danh mục cho filter
-$categories = $conn->query("SELECT id, ten_danh_muc FROM danh_muc_san_pham WHERE trang_thai = 'HOAT_DONG'")->fetch_all(MYSQLI_ASSOC);
+if ($category_filter) {
+    $sql .= " AND sp.danh_muc_id = ?";
+    $params[] = $category_filter;
+}
 
-closeDBConnection($conn);
+if ($status_filter) {
+    $sql .= " AND sp.trang_thai = ?";
+    $params[] = $status_filter;
+}
+
+$sql .= " ORDER BY sp.tao_luc DESC";
+
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$products = $stmt->fetchAll();
+
+// Lấy danh mục để show trong filter và form
+$categories = $pdo->query("SELECT * FROM danh_muc_san_pham WHERE trang_thai = 'HOAT_DONG' ORDER BY ten_danh_muc")->fetchAll();
+
+include 'includes/header.php';
 ?>
 
-<?php include 'includes/header.php'; ?>
-
-<div class="card">
-    <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="card-title mb-0">Danh sách sản phẩm</h5>
-        <div>
-            <a href="product-detail.php?action=add" class="btn btn-primary">
-                <i class="fas fa-plus"></i> Thêm sản phẩm
-            </a>
+<!-- Modal -->
+<div class="modal fade" id="productModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content rounded-4 border-0 shadow-lg">
+            <div class="modal-header border-bottom-0 px-4 pt-4">
+                <h5 class="modal-title fw-bold" id="modalTitle">Thêm sản phẩm</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="">
+                <div class="modal-body px-4 pb-4">
+                    <input type="hidden" name="action" id="formAction" value="add">
+                    <input type="hidden" name="id" id="productId">
+                    
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold small text-secondary">Tên sản phẩm <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="ten_san_pham" id="productName" required>
+                        </div>
+                        
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold small text-secondary">Danh mục</label>
+                            <select class="form-select" name="danh_muc_id" id="productCategory">
+                                <option value="">-- Chọn danh mục --</option>
+                                <?php foreach ($categories as $cat): ?>
+                                    <option value="<?php echo $cat['id']; ?>"><?php echo $cat['ten_danh_muc']; ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="col-12">
+                            <label class="form-label fw-bold small text-secondary">Đường dẫn (slug)</label>
+                            <input type="text" class="form-control" name="duong_dan" id="productSlug" placeholder="Tự động tạo nếu để trống">
+                        </div>
+                        
+                        <div class="col-12">
+                            <label class="form-label fw-bold small text-secondary">Mô tả</label>
+                            <textarea class="form-control" name="mo_ta" id="productDesc" rows="3"></textarea>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small text-secondary">Giá bán <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <input type="number" class="form-control" name="gia_ban" id="productPrice" required min="0" step="1000">
+                                <span class="input-group-text">đ</span>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small text-secondary">Số lượng tồn <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="so_luong_ton" id="productStock" required min="0">
+                        </div>
+                        
+                        <div class="col-12">
+                            <label class="form-label fw-bold small text-secondary">URL ảnh đại diện</label>
+                            <input type="text" class="form-control" name="anh_dai_dien_url" id="productImage" placeholder="https://example.com/image.jpg">
+                        </div>
+                        
+                        <div class="col-12">
+                            <label class="form-label fw-bold small text-secondary">Trạng thái</label>
+                            <select class="form-select" name="trang_thai" id="productStatus">
+                                <option value="DANG_BAN">Đang bán</option>
+                                <option value="NGUNG_BAN">Ngừng bán</option>
+                                <option value="DA_GO">Đã gỡ</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-top-0 px-4 pb-4">
+                    <button type="button" class="btn btn-light flex-grow-1 rounded-3" data-bs-dismiss="modal">Hủy</button>
+                    <button type="submit" class="btn btn-dark-custom flex-grow-1">Lưu lại</button>
+                </div>
+            </form>
         </div>
     </div>
-    <div class="card-body">
-        <!-- Filter Form -->
-        <form method="GET" class="row g-3 mb-4">
-            <div class="col-md-3">
-                <input type="text" class="form-control" name="search" placeholder="Tìm kiếm sản phẩm..." 
-                       value="<?php echo htmlspecialchars($search); ?>">
-            </div>
-            <div class="col-md-2">
-                <select class="form-select" name="category">
-                    <option value="all">Tất cả danh mục</option>
-                    <?php foreach ($categories as $cat): ?>
-                    <option value="<?php echo $cat['id']; ?>" <?php echo $category == $cat['id'] ? 'selected' : ''; ?>>
-                        <?php echo htmlspecialchars($cat['ten_danh_muc']); ?>
-                    </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <select class="form-select" name="status">
-                    <option value="all">Tất cả trạng thái</option>
-                    <option value="DANG_BAN" <?php echo $status_filter == 'DANG_BAN' ? 'selected' : ''; ?>>Đang bán</option>
-                    <option value="NGUNG_BAN" <?php echo $status_filter == 'NGUNG_BAN' ? 'selected' : ''; ?>>Ngừng bán</option>
-                    <option value="DA_GO" <?php echo $status_filter == 'DA_GO' ? 'selected' : ''; ?>>Đã gỡ</option>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-primary w-100">Lọc</button>
-            </div>
-            <div class="col-md-2">
-                <a href="products.php" class="btn btn-secondary w-100">Reset</a>
-            </div>
-        </form>
+</div>
 
+<div class="offcanvas offcanvas-start" tabindex="-1" id="mobileSidebar">
+    <div class="offcanvas-header border-bottom">
+        <h5 class="offcanvas-title fw-bold">Menu</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body p-0">
+        <?php include 'includes/sidebar.php'; ?>
+    </div>
+</div>
+
+<?php include 'includes/sidebar.php'; ?>
+
+<main class="main-content min-vh-100 p-4 p-lg-5">
+    
+    <div class="d-lg-none d-flex align-items-center justify-content-between mb-4">
+        <button class="btn btn-white border shadow-sm rounded-3" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobileSidebar">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+        <span class="fw-bold fs-5">AdminCenter</span>
+        <img src="https://ui-avatars.com/api/?name=Admin+User" class="rounded-circle border" width="36" height="36" alt="Admin">
+    </div>
+
+    <?php displayMessage(); ?>
+
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4 gap-3">
+        <div>
+            <h2 class="fw-bold text-dark mb-1">Quản lý Sản phẩm</h2>
+            <p class="text-secondary small mb-0">Quản lý thông tin và tồn kho sản phẩm</p>
+        </div>
+        <button onclick="openModal()" class="btn btn-dark-custom d-flex align-items-center gap-2">
+            <i class="fa-solid fa-plus text-xs"></i> Thêm sản phẩm
+        </button>
+    </div>
+
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm rounded-4 mb-4">
+        <div class="card-body">
+            <form method="GET" action="" class="row g-3">
+                <div class="col-md-4">
+                    <input type="text" name="search" class="form-control" placeholder="Tìm kiếm sản phẩm..." value="<?php echo $search; ?>">
+                </div>
+                <div class="col-md-3">
+                    <select name="category" class="form-select">
+                        <option value="">Tất cả danh mục</option>
+                        <?php foreach ($categories as $cat): ?>
+                            <option value="<?php echo $cat['id']; ?>" <?php echo $category_filter == $cat['id'] ? 'selected' : ''; ?>>
+                                <?php echo $cat['ten_danh_muc']; ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select name="status" class="form-select">
+                        <option value="">Tất cả trạng thái</option>
+                        <option value="DANG_BAN" <?php echo $status_filter === 'DANG_BAN' ? 'selected' : ''; ?>>Đang bán</option>
+                        <option value="NGUNG_BAN" <?php echo $status_filter === 'NGUNG_BAN' ? 'selected' : ''; ?>>Ngừng bán</option>
+                        <option value="DA_GO" <?php echo $status_filter === 'DA_GO' ? 'selected' : ''; ?>>Đã gỡ</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100"><i class="fas fa-search"></i> Lọc</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
         <div class="table-responsive">
-            <table class="table table-hover datatable">
+            <table class="table table-custom table-hover mb-0">
                 <thead>
                     <tr>
-                        <th>ID</th>
-                        <th>Ảnh</th>
-                        <th>Tên sản phẩm</th>
+                        <th class="ps-4">Sản phẩm</th>
                         <th>Danh mục</th>
                         <th>Giá bán</th>
                         <th>Tồn kho</th>
                         <th>Trạng thái</th>
-                        <th>Ngày tạo</th>
-                        <th>Thao tác</th>
+                        <th class="text-end pe-4">Thao tác</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($products as $product): ?>
-                    <tr>
-                        <td><?php echo $product['id']; ?></td>
-                        <td>
-                            <?php if ($product['anh_dai_dien_url']): ?>
-                            <img src="<?php echo htmlspecialchars($product['anh_dai_dien_url']); ?>" 
-                                 alt="<?php echo htmlspecialchars($product['ten_san_pham']); ?>"
-                                 class="product-img">
-                            <?php else: ?>
-                            <div class="product-img bg-light d-flex align-items-center justify-content-center">
-                                <i class="fas fa-image text-muted"></i>
-                            </div>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <strong><?php echo htmlspecialchars($product['ten_san_pham']); ?></strong><br>
-                            <small class="text-muted">/<?php echo htmlspecialchars($product['duong_dan']); ?></small>
-                        </td>
-                        <td><?php echo htmlspecialchars($product['ten_danh_muc'] ?? 'N/A'); ?></td>
-                        <td><?php echo formatCurrency($product['gia_ban']); ?></td>
-                        <td>
-                            <span class="badge <?php echo $product['so_luong_ton'] > 0 ? 'bg-success' : 'bg-danger'; ?>">
-                                <?php echo $product['so_luong_ton']; ?>
-                            </span>
-                        </td>
-                        <td><?php echo displayProductStatus($product['trang_thai']); ?></td>
-                        <td><?php echo formatDate($product['tao_luc']); ?></td>
-                        <td>
-                            <div class="btn-group btn-group-sm">
-                                <a href="product-detail.php?id=<?php echo $product['id']; ?>" class="btn btn-info">
-                                    <i class="fas fa-edit"></i> Sửa
-                                </a>
-                                
-                                <?php if ($product['trang_thai'] == 'DANG_BAN'): ?>
-                                <a href="products.php?change_status&id=<?php echo $product['id']; ?>&status=NGUNG_BAN" 
-                                   class="btn btn-warning" onclick="return confirm('Ngừng bán sản phẩm này?')">
-                                    <i class="fas fa-pause"></i>
-                                </a>
-                                <?php elseif ($product['trang_thai'] == 'NGUNG_BAN'): ?>
-                                <a href="products.php?change_status&id=<?php echo $product['id']; ?>&status=DANG_BAN" 
-                                   class="btn btn-success" onclick="return confirm('Tiếp tục bán sản phẩm này?')">
-                                    <i class="fas fa-play"></i>
-                                </a>
-                                <?php endif; ?>
-                                
-                                <a href="product-process.php?action=delete&id=<?php echo $product['id']; ?>" 
-                                   class="btn btn-danger" onclick="return confirm('Xóa sản phẩm này?')">
-                                    <i class="fas fa-trash"></i>
-                                </a>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
+                    <?php if (empty($products)): ?>
+                        <tr>
+                            <td colspan="6" class="text-center text-secondary py-5">
+                                <i class="fas fa-box-open fa-3x mb-3 d-block"></i>
+                                Chưa có sản phẩm nào
+                            </td>
+                        </tr>
+                    <?php else: ?>
+                        <?php foreach ($products as $product): ?>
+                            <tr>
+                                <td class="ps-4">
+                                    <div class="d-flex align-items-center gap-3">
+                                        <img src="<?php echo $product['anh_dai_dien_url'] ?: 'https://placehold.co/80x80?text=No+Image'; ?>" 
+                                             class="rounded-3 border" width="60" height="60" 
+                                             style="object-fit: cover;" alt="<?php echo $product['ten_san_pham']; ?>">
+                                        <div>
+                                            <div class="fw-bold text-dark"><?php echo $product['ten_san_pham']; ?></div>
+                                            <div class="text-secondary small">#<?php echo $product['id']; ?> • <?php echo $product['duong_dan']; ?></div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <?php if ($product['ten_danh_muc']): ?>
+                                        <span class="badge bg-light text-primary border"><?php echo $product['ten_danh_muc']; ?></span>
+                                    <?php else: ?>
+                                        <span class="text-secondary small">Chưa phân loại</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="fw-bold text-primary"><?php echo formatPrice($product['gia_ban']); ?></td>
+                                <td>
+                                    <?php if ($product['so_luong_ton'] > 10): ?>
+                                        <span class="badge bg-success-subtle text-success"><?php echo $product['so_luong_ton']; ?> sp</span>
+                                    <?php elseif ($product['so_luong_ton'] > 0): ?>
+                                        <span class="badge bg-warning-subtle text-warning"><?php echo $product['so_luong_ton']; ?> sp</span>
+                                    <?php else: ?>
+                                        <span class="badge bg-danger-subtle text-danger">Hết hàng</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo getStatusBadge($product['trang_thai'], 'product'); ?></td>
+                                <td class="text-end pe-4">
+                                    <button onclick='editProduct(<?php echo json_encode($product); ?>)' class="btn btn-sm btn-light text-primary border me-1">
+                                        <i class="fas fa-pen"></i>
+                                    </button>
+                                    <form method="POST" action="" class="d-inline" onsubmit="return confirmDelete()">
+                                        <input type="hidden" name="action" value="delete">
+                                        <input type="hidden" name="id" value="<?php echo $product['id']; ?>">
+                                        <button type="submit" class="btn btn-sm btn-light text-danger border">
+                                            <i class="fas fa-trash-can"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
-        
-        <!-- Phân trang -->
-        <?php if ($total_pages > 1): ?>
-        <nav>
-            <ul class="pagination justify-content-center">
-                <?php if ($page > 1): ?>
-                <li class="page-item">
-                    <a class="page-link" href="?page=<?php echo $page - 1; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo $category; ?>&status=<?php echo $status_filter; ?>">Trước</a>
-                </li>
-                <?php endif; ?>
-                
-                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <li class="page-item <?php echo $i == $page ? 'active' : ''; ?>">
-                    <a class="page-link" href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo $category; ?>&status=<?php echo $status_filter; ?>">
-                        <?php echo $i; ?>
-                    </a>
-                </li>
-                <?php endfor; ?>
-                
-                <?php if ($page < $total_pages): ?>
-                <li class="page-item">
-                    <a class="page-link" href="?page=<?php echo $page + 1; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo $category; ?>&status=<?php echo $status_filter; ?>">Sau</a>
-                </li>
-                <?php endif; ?>
-            </ul>
-        </nav>
-        <?php endif; ?>
     </div>
-</div>
+
+</main>
+
+<script>
+let productModal;
+
+document.addEventListener('DOMContentLoaded', function() {
+    productModal = new bootstrap.Modal(document.getElementById('productModal'));
+});
+
+function openModal() {
+    document.getElementById('formAction').value = 'add';
+    document.getElementById('modalTitle').innerText = 'Thêm sản phẩm';
+    document.getElementById('productId').value = '';
+    document.getElementById('productName').value = '';
+    document.getElementById('productSlug').value = '';
+    document.getElementById('productCategory').value = '';
+    document.getElementById('productDesc').value = '';
+    document.getElementById('productPrice').value = '';
+    document.getElementById('productStock').value = '';
+    document.getElementById('productImage').value = '';
+    document.getElementById('productStatus').value = 'DANG_BAN';
+    productModal.show();
+}
+
+function editProduct(product) {
+    document.getElementById('formAction').value = 'edit';
+    document.getElementById('modalTitle').innerText = 'Chỉnh sửa sản phẩm';
+    document.getElementById('productId').value = product.id;
+    document.getElementById('productName').value = product.ten_san_pham;
+    document.getElementById('productSlug').value = product.duong_dan;
+    document.getElementById('productCategory').value = product.danh_muc_id || '';
+    document.getElementById('productDesc').value = product.mo_ta || '';
+    document.getElementById('productPrice').value = product.gia_ban;
+    document.getElementById('productStock').value = product.so_luong_ton;
+    document.getElementById('productImage').value = product.anh_dai_dien_url || '';
+    document.getElementById('productStatus').value = product.trang_thai;
+    productModal.show();
+}
+</script>
 
 <?php include 'includes/footer.php'; ?>

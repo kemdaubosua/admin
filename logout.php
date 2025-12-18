@@ -1,9 +1,5 @@
 <?php
-// /admin/logout.php
 session_start();
-require_once 'includes/auth.php';
-
-adminLogout();
+session_destroy();
 header('Location: login.php');
-exit();
-?>
+exit;
